@@ -1,0 +1,129 @@
+name: Build and Release Signal Desktop AppImage
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - README.md
+      - LICENSE
+  workflow_dispatch:
+    inputs:
+      signal_version:
+        description: 'Signal Desktop version to build (leave empty for latest)'
+        required: false
+        type: string
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+    
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Checkout specific Signal version if requested
+      if: ${{ inputs.signal_version }}
+      run: |
+        cd Signal-Desktop
+        echo "Checking out Signal Desktop version: ${{ inputs.signal_version }}"
+        git checkout "v${{ inputs.signal_version }}" || git checkout "${{ inputs.signal_version }}"
+        # Reinstall dependencies for the specific version
+        pnpm install --frozen-lockfile
+        # Rebuild with the specific version
+        pnpm run build-release
+
+    - name: Make build script executable and run it
+      run: |
+        chmod +x build_latest.sh
+        ./build_latest.sh
+
+    - name: Get Signal version and prepare artifacts
+      id: prepare
+      run: |
+        cd Signal-Desktop
+        # Extract version from package.json
+        VERSION=$(python3 -c "import json; print(json.load(open('package.json'))['version'])")
+        echo "VERSION=$VERSION" >> $GITHUB_ENV
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        
+        # Find the built AppImage
+        APPIMAGE_PATH=$(find release -name "*.AppImage" -type f | head -1)
+        if [ -z "$APPIMAGE_PATH" ]; then
+          echo "No AppImage found in release directory"
+          ls -la release/
+          exit 1
+        fi
+        
+        echo "APPIMAGE_PATH=$APPIMAGE_PATH" >> $GITHUB_ENV
+        echo "appimage_path=$APPIMAGE_PATH" >> $GITHUB_OUTPUT
+        
+        # Get AppImage filename for artifact naming
+        APPIMAGE_NAME=$(basename "$APPIMAGE_PATH")
+        echo "APPIMAGE_NAME=$APPIMAGE_NAME" >> $GITHUB_ENV
+        echo "appimage_name=$APPIMAGE_NAME" >> $GITHUB_OUTPUT
+
+    - name: Create and Push Tag
+      run: |
+        git config user.name "github-actions"
+        git config user.email "github-actions@github.com"
+        TAG_NAME="signal-desktop-${{ env.VERSION }}-${{ github.run_number }}"
+        echo "TAG_NAME=$TAG_NAME" >> $GITHUB_ENV
+        git tag $TAG_NAME $GITHUB_SHA
+        git push origin $TAG_NAME
+
+    - name: Upload AppImage as Build Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: signal-desktop-appimage-x86_64
+        path: Signal-Desktop/${{ env.APPIMAGE_PATH }}
+        retention-days: 1
+
+    - name: Create Release
+      id: create_release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ env.TAG_NAME }}
+        release_name: Signal Desktop AppImage v${{ env.VERSION }}
+        body: |
+          Signal Desktop AppImage build for x86_64 architecture
+          
+          **Version:** ${{ env.VERSION }}
+          **Build Date:** ${{ github.event.head_commit.timestamp }}
+          **Commit:** ${{ github.sha }}
+          
+          ## Installation
+          1. Download the AppImage file
+          2. Make it executable: `chmod +x ${{ env.APPIMAGE_NAME }}`
+          3. Run it: `./${{ env.APPIMAGE_NAME }}`
+          
+          ## System Requirements
+          - x86_64 Linux system
+          - FUSE support (usually pre-installed on most distributions)
+          
+          This AppImage is built from the official Signal Desktop source code.
+        draft: false
+        prerelease: false
+
+    - name: Upload AppImage to Release
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: Signal-Desktop/${{ env.APPIMAGE_PATH }}
+        asset_name: ${{ env.APPIMAGE_NAME }}
+        asset_content_type: application/octet-stream
+
+    - name: Output build information
+      run: |
+        echo "✅ Build completed successfully!"
+        echo "📦 AppImage: ${{ env.APPIMAGE_NAME }}"
+        echo "🏷️ Tag: ${{ env.TAG_NAME }}"
+        echo "📋 Release URL: ${{ steps.create_release.outputs.html_url }}"
