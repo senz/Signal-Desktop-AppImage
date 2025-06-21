@@ -13,6 +13,7 @@
 #     You should have received a copy of the GNU Affero General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+set -eop pipefail
 # Install dependencies
 sudo apt-get update
 sudo apt-get install build-essential -y
@@ -22,53 +23,59 @@ sudo apt-get install curl -y
 sudo apt-get install git -y
 sudo apt-get install git-lfs -y
 
+# Install AppImage dependencies
+sudo apt-get install fuse libfuse2 -y
+wget https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage -O /tmp/appimagetool
+chmod +x /tmp/appimagetool
+sudo mv /tmp/appimagetool /usr/local/bin/appimagetool
 
-# Install NVM (Node Version Manager) required node.js
-curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.38.0/install.sh | bash
-source $HOME/.nvm/nvm.sh
-nvm install v14.16.0
-npm install -g npm
-npm update -g
+
+# Install Node.js v22 directly
+curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - 
+sudo apt-get install -y nodejs
 
 
 # Clone Signal-Desktop repo
-git clone https://github.com/signalapp/Signal-Desktop.git
-cd Signal-Desktop
-git-lfs install
+if [ ! -d "Signal-Desktop" ]; then
+  echo "Cloning Signal-Desktop repository..."
+  git clone https://github.com/signalapp/Signal-Desktop.git
+  cd Signal-Desktop
+  git-lfs install
+else
+  echo "Signal-Desktop directory already exists. Skipping clone."
+  cd Signal-Desktop
+fi
 
 # Build Signal
 
-npm install --global yarn
-yarn cache clean
-yarn install --frozen-lockfile
-yarn grunt
-yarn build:webpack
+sudo npm install --global pnpm
+pnpm install --frozen-lockfile
 
 # Edit package.json to add the option to produce .AppImage
-python3 <<EOF
-query = '''
-      "target": [
-        "deb"
-      ],
-'''
+python3 << 'EOF'
+import json
 
-replacement = '''
-      "target": [
-        "deb",
-        "AppImage"
-      ],
-'''
+# Read package.json
+with open("package.json", 'r') as file:
+    data = json.load(file)
 
-data = None
-with open("package.json",'r') as file:
-    data = file.read()
-    data = data.replace(query,replacement)
+# Find and modify the build.linux.target array
+if 'build' in data and 'linux' in data['build'] and 'target' in data['build']['linux']:
+    targets = data['build']['linux']['target']
+    if isinstance(targets, list) and 'AppImage' not in targets:
+        targets.append('AppImage')
+        print("Added AppImage to build targets")
+    else:
+        print("AppImage already in targets or targets is not a list")
+else:
+    print("Could not find build.linux.target in package.json")
 
-with open("package.json",'w') as file:
-    file.write(data)
+# Write back to package.json
+with open("package.json", 'w') as file:
+    json.dump(data, file, indent=2)
 EOF
 
 # Build
-yarn build-release
+pnpm run build-release
 echo "Output is in Signal-Desktop/release/"
 
