@@ -26,18 +26,10 @@ jobs:
     - name: Checkout Repository
       uses: actions/checkout@v4
 
-    - name: Checkout specific Signal version if requested
-      if: ${{ inputs.signal_version }}
-      run: |
-        cd Signal-Desktop
-        echo "Checking out Signal Desktop version: ${{ inputs.signal_version }}"
-        git checkout "v${{ inputs.signal_version }}" || git checkout "${{ inputs.signal_version }}"
-        # Reinstall dependencies for the specific version
-        pnpm install --frozen-lockfile
-        # Rebuild with the specific version
-        pnpm run build-release
-
     - name: Make build script executable and run it
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        SIGNAL_VERSION: ${{ inputs.signal_version }}
       run: |
         chmod +x build_latest.sh
         ./build_latest.sh

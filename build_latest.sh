@@ -46,6 +46,12 @@ else
   cd Signal-Desktop
 fi
 
+# Checkout specific version if SIGNAL_VERSION environment variable is set
+if [ -n "$SIGNAL_VERSION" ]; then
+  echo "Checking out Signal Desktop version: $SIGNAL_VERSION"
+  git checkout "v$SIGNAL_VERSION" || git checkout "$SIGNAL_VERSION"
+fi
+
 # Build Signal
 
 sudo npm install --global pnpm
